@@ -1,0 +1,16 @@
+services:
+  db:
+    image: postgres:17
+    container_name: mtp_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: mtp_user
+      POSTGRES_PASSWORD: mtp_password
+      POSTGRES_DB: mtp_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:
