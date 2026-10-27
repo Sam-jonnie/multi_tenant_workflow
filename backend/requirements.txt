@@ -4,3 +4,7 @@ psycopg[binary]
 alembic
 pydantic[email]
 pydantic-settings
+argon2-cffi==25.1.0
+argon2-cffi-bindings==26.1.0
+pwdlib==0.3.1
+PyJWT==2.15.1

@@ -55,3 +55,7 @@ class AuditAction(StrEnum):
     FILE_UPLOADED = "file_uploaded"
     MEMBER_ADDED = "member_added"
     MEMBER_REMOVED = "member_removed"
+
+class TokenType(StrEnum):
+    ACCESS = "access"
+    REFRESH = "refresh"
