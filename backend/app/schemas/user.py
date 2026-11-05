@@ -13,3 +13,10 @@ class UserRead(BaseModel):
     is_active: bool
     is_super_admin: bool
     created_at: datetime
+
+class UserBrief(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    username: str
+    full_name: str

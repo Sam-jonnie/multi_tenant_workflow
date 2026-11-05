@@ -59,3 +59,16 @@ class AuditAction(StrEnum):
 class TokenType(StrEnum):
     ACCESS = "access"
     REFRESH = "refresh"
+
+class SortOrder(StrEnum):
+    ASC = "asc"
+    DESC = "desc"
+
+
+class ProjectSortBy(StrEnum):
+    NAME = "name"
+    STATUS = "status"
+    START_DATE = "start_date"
+    DUE_DATE = "due_date"
+    CREATED_AT = "created_at"
+    UPDATED_AT = "updated_at"
