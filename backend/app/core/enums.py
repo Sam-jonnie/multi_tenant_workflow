@@ -72,3 +72,12 @@ class ProjectSortBy(StrEnum):
     DUE_DATE = "due_date"
     CREATED_AT = "created_at"
     UPDATED_AT = "updated_at"
+
+class TaskSortBy(StrEnum):
+    TITLE = "title"
+    PRIORITY = "priority"
+    STATUS = "status"
+    POSITION = "position"
+    DUE_DATE = "due_date"
+    CREATED_AT = "created_at"
+    UPDATED_AT = "updated_at"

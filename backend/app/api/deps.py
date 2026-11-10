@@ -4,20 +4,25 @@ from fastapi import Depends, Header
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
-from app.core.context import OrgContext, ProjectContext
+from app.core.context import OrgContext, ProjectContext, TaskContext
 from app.core.database import get_db
 from app.core.enums import OrgRole, TokenType
 from app.core.exceptions import ForbiddenError, UnauthorizedError
 from app.core.permissions import has_min_role
 from app.core.security import decode_token
+from app.models.project import Project
 from app.models.user import User
 from app.repositories.membership_repository import MembershipRepository
 from app.repositories.organization_repository import OrganizationRepository
 from app.repositories.project_repository import ProjectMemberRepository, ProjectRepository
+from app.repositories.task_repository import TaskRepository
 from app.repositories.user_repository import UserRepository
 from app.services.auth_service import AuthService
+from app.services.dashboard_service import DashboardService
 from app.services.organization_service import OrganizationService
 from app.services.project_service import ProjectService
+from app.services.task_dependency_service import TaskDependencyService
+from app.services.task_service import TaskService
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -119,22 +124,26 @@ TenantAdmin = Annotated[OrgContext, Depends(require_tenant_role(OrgRole.ORG_ADMI
 
 
 # ---------- project context (resource-based authorization) ----------
+def build_project_context(
+    project: Project | None, user: User, db: Session, denied: ForbiddenError
+) -> ProjectContext:
+    if project is None:
+        raise denied
+    # The project tells us which org it belongs to, then we check the user against THAT org.
+    org_ctx = build_org_context(project.organization_id, user, db, denied)
+
+    is_member = ProjectMemberRepository(db).get(project.id, user.id) is not None
+    if not org_ctx.is_admin and not is_member:
+        raise denied
+    return ProjectContext(project=project, org=org_ctx, is_member=is_member)
+
+
 def get_project_context(
     project_id: int, current_user: CurrentUser, db: DbSession
 ) -> ProjectContext:
     denied = ForbiddenError("PROJECT_ACCESS_DENIED", "You do not have access to this project.")
-
     project = ProjectRepository(db).get_by_id(project_id)
-    if project is None:
-        raise denied
-
-    # The project tells us which org it belongs to, then we check the user against THAT org.
-    org_ctx = build_org_context(project.organization_id, current_user, db, denied)
-
-    is_member = ProjectMemberRepository(db).get(project.id, current_user.id) is not None
-    if not org_ctx.is_admin and not is_member:
-        raise denied
-    return ProjectContext(project=project, org=org_ctx, is_member=is_member)
+    return build_project_context(project, current_user, db, denied)
 
 
 ProjectContextDep = Annotated[ProjectContext, Depends(get_project_context)]
@@ -149,7 +158,48 @@ def get_manageable_project(pctx: ProjectContextDep) -> ProjectContext:
     return pctx
 
 
+def get_project_contributor(pctx: ProjectContextDep) -> ProjectContext:
+    if not has_min_role(pctx.org.role, OrgRole.TEAM_MEMBER):
+        raise ForbiddenError(
+            "INSUFFICIENT_ROLE",
+            f"This action requires the {OrgRole.TEAM_MEMBER.value} role or higher.",
+        )
+    return pctx
+
+
 ManageableProject = Annotated[ProjectContext, Depends(get_manageable_project)]
+ProjectContributor = Annotated[ProjectContext, Depends(get_project_contributor)]
+
+
+# ---------- task context ----------
+def get_task_context(task_id: int, current_user: CurrentUser, db: DbSession) -> TaskContext:
+    denied = ForbiddenError(
+        "TASK_ORGANIZATION_ACCESS_DENIED", "You do not have access to this task."
+    )
+    task = TaskRepository(db).get_by_id(task_id)
+    pctx = build_project_context(task.project if task else None, current_user, db, denied)
+    return TaskContext(task=task, project=pctx)  # type: ignore[arg-type]
+
+
+TaskContextDep = Annotated[TaskContext, Depends(get_task_context)]
+
+
+def get_editable_task(tctx: TaskContextDep) -> TaskContext:
+    if not tctx.can_edit:
+        raise ForbiddenError(
+            "TASK_EDIT_DENIED", "Only project managers, the reporter or the assignee can do this."
+        )
+    return tctx
+
+
+def get_manageable_task(tctx: TaskContextDep) -> TaskContext:
+    if not tctx.is_manager:
+        raise ForbiddenError("TASK_MANAGE_DENIED", "Only project managers can do this.")
+    return tctx
+
+
+EditableTask = Annotated[TaskContext, Depends(get_editable_task)]
+ManageableTask = Annotated[TaskContext, Depends(get_manageable_task)]
 
 
 # ---------- services ----------
@@ -165,6 +215,21 @@ def get_project_service(db: DbSession) -> ProjectService:
     return ProjectService(db)
 
 
+def get_task_service(db: DbSession) -> TaskService:
+    return TaskService(db)
+
+
+def get_task_dependency_service(db: DbSession) -> TaskDependencyService:
+    return TaskDependencyService(db)
+
+
+def get_dashboard_service(db: DbSession) -> DashboardService:
+    return DashboardService(db)
+
+
 AuthServiceDep = Annotated[AuthService, Depends(get_auth_service)]
 OrganizationServiceDep = Annotated[OrganizationService, Depends(get_organization_service)]
 ProjectServiceDep = Annotated[ProjectService, Depends(get_project_service)]
+TaskServiceDep = Annotated[TaskService, Depends(get_task_service)]
+TaskDependencyServiceDep = Annotated[TaskDependencyService, Depends(get_task_dependency_service)]
+DashboardServiceDep = Annotated[DashboardService, Depends(get_dashboard_service)]

@@ -14,6 +14,7 @@ from app.core.workflow import PROJECT_TRANSITIONS, ensure_transition
 from app.models.project import Project, ProjectMember
 from app.repositories.membership_repository import MembershipRepository
 from app.repositories.project_repository import ProjectMemberRepository, ProjectRepository
+from app.repositories.task_repository import TaskRepository
 from app.schemas.common import PageParams
 from app.schemas.project import ProjectCreate, ProjectListQuery, ProjectUpdate
 
@@ -24,6 +25,7 @@ class ProjectService:
         self.projects = ProjectRepository(db)
         self.members = ProjectMemberRepository(db)
         self.org_members = MembershipRepository(db)
+        self.tasks = TaskRepository(db)
 
     # ---------- projects ----------
     def create(self, ctx: OrgContext, data: ProjectCreate) -> Project:
@@ -147,6 +149,14 @@ class ProjectService:
             raise ConflictError(
                 "OWNER_CANNOT_BE_REMOVED", "Transfer ownership before removing the owner."
             )
+
+        open_tasks = self.tasks.count_open_assigned(project.id, user_id)
+        if open_tasks:
+            raise ConflictError(
+                "MEMBER_HAS_OPEN_TASKS",
+                f"Reassign or finish their {open_tasks} open task(s) first.",
+            )
+
         member = self.members.get(project.id, user_id)
         if member is None:
             raise NotFoundError("PROJECT_MEMBER_NOT_FOUND", "User is not a member of this project.")

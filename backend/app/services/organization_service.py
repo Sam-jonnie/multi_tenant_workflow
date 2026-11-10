@@ -107,6 +107,13 @@ class OrganizationService:
         self.members.delete(membership)
         self.db.commit()
 
+        open_tasks = self.tasks.count_open_assigned(project.id, user_id)
+        if open_tasks:
+            raise ConflictError(
+                "MEMBER_HAS_OPEN_TASKS",
+                f"Reassign or finish their {open_tasks} open task(s) first.",
+            )
+
     # ---------- helpers ----------
     def _get_member(self, org_id: int, user_id: int) -> OrganizationMember:
         membership = self.members.get(org_id, user_id)
