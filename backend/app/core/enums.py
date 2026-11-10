@@ -45,20 +45,72 @@ class NotificationType(StrEnum):
 
 
 class AuditAction(StrEnum):
+    # authentication
+    USER_REGISTERED = "user_registered"
     LOGIN = "login"
-    PROJECT_CREATED = "project_created"
-    PROJECT_UPDATED = "project_updated"
-    TASK_CREATED = "task_created"
-    TASK_ASSIGNED = "task_assigned"
-    TASK_STATUS_CHANGED = "task_status_changed"
-    COMMENT_ADDED = "comment_added"
-    FILE_UPLOADED = "file_uploaded"
+    LOGIN_FAILED = "login_failed"
+    LOGOUT = "logout"
+    PASSWORD_CHANGED = "password_changed"
+    # organizations and members
+    ORGANIZATION_CREATED = "organization_created"
+    ORGANIZATION_UPDATED = "organization_updated"
     MEMBER_ADDED = "member_added"
     MEMBER_REMOVED = "member_removed"
+    MEMBER_ROLE_CHANGED = "member_role_changed"
+    MEMBER_STATUS_CHANGED = "member_status_changed"
+    # projects
+    PROJECT_CREATED = "project_created"
+    PROJECT_UPDATED = "project_updated"
+    PROJECT_STATUS_CHANGED = "project_status_changed"
+    PROJECT_DELETED = "project_deleted"
+    PROJECT_MEMBER_ADDED = "project_member_added"
+    PROJECT_MEMBER_REMOVED = "project_member_removed"
+    # tasks
+    TASK_CREATED = "task_created"
+    TASK_UPDATED = "task_updated"
+    TASK_ASSIGNED = "task_assigned"
+    TASK_STATUS_CHANGED = "task_status_changed"
+    TASK_DELETED = "task_deleted"
+    TASK_DEPENDENCY_ADDED = "task_dependency_added"
+    TASK_DEPENDENCY_REMOVED = "task_dependency_removed"
+    # comments and files
+    COMMENT_ADDED = "comment_added"
+    COMMENT_UPDATED = "comment_updated"
+    COMMENT_DELETED = "comment_deleted"
+    FILE_UPLOADED = "file_uploaded"
+    FILE_DELETED = "file_deleted"
+
+
+class AuditEntity(StrEnum):
+    USER = "user"
+    ORGANIZATION = "organization"
+    ORGANIZATION_MEMBER = "organization_member"
+    PROJECT = "project"
+    PROJECT_MEMBER = "project_member"
+    TASK = "task"
+    TASK_DEPENDENCY = "task_dependency"
+    COMMENT = "comment"
+    ATTACHMENT = "attachment"
+
+
+class FileKind(StrEnum):
+    """What a file REALLY is, decided from its bytes (used in Part 2)."""
+
+    PNG = "png"
+    JPEG = "jpeg"
+    GIF = "gif"
+    WEBP = "webp"
+    PDF = "pdf"
+    DOCX = "docx"
+    XLSX = "xlsx"
+    PPTX = "pptx"
+    TEXT = "text"
+
 
 class TokenType(StrEnum):
     ACCESS = "access"
     REFRESH = "refresh"
+
 
 class SortOrder(StrEnum):
     ASC = "asc"
@@ -72,6 +124,7 @@ class ProjectSortBy(StrEnum):
     DUE_DATE = "due_date"
     CREATED_AT = "created_at"
     UPDATED_AT = "updated_at"
+
 
 class TaskSortBy(StrEnum):
     TITLE = "title"

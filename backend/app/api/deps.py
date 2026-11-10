@@ -1,10 +1,16 @@
 from typing import Annotated
 
-from fastapi import Depends, Header
+from fastapi import Depends, Header, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
-from app.core.context import OrgContext, ProjectContext, TaskContext
+from app.core.context import (
+    CommentContext,
+    OrgContext,
+    ProjectContext,
+    RequestInfo,
+    TaskContext,
+)
 from app.core.database import get_db
 from app.core.enums import OrgRole, TokenType
 from app.core.exceptions import ForbiddenError, UnauthorizedError
@@ -12,12 +18,15 @@ from app.core.permissions import has_min_role
 from app.core.security import decode_token
 from app.models.project import Project
 from app.models.user import User
+from app.repositories.comment_repository import CommentRepository
 from app.repositories.membership_repository import MembershipRepository
 from app.repositories.organization_repository import OrganizationRepository
 from app.repositories.project_repository import ProjectMemberRepository, ProjectRepository
 from app.repositories.task_repository import TaskRepository
 from app.repositories.user_repository import UserRepository
+from app.services.audit_service import AuditService
 from app.services.auth_service import AuthService
+from app.services.comment_service import CommentService
 from app.services.dashboard_service import DashboardService
 from app.services.organization_service import OrganizationService
 from app.services.project_service import ProjectService
@@ -198,8 +207,68 @@ def get_manageable_task(tctx: TaskContextDep) -> TaskContext:
     return tctx
 
 
+def get_task_contributor(tctx: TaskContextDep) -> TaskContext:
+    if not has_min_role(tctx.role, OrgRole.TEAM_MEMBER):
+        raise ForbiddenError(
+            "INSUFFICIENT_ROLE",
+            f"This action requires the {OrgRole.TEAM_MEMBER.value} role or higher.",
+        )
+    return tctx
+
+
 EditableTask = Annotated[TaskContext, Depends(get_editable_task)]
 ManageableTask = Annotated[TaskContext, Depends(get_manageable_task)]
+ContributorTask = Annotated[TaskContext, Depends(get_task_contributor)]
+
+
+# ---------- comment context ----------
+def get_comment_context(
+    comment_id: int, current_user: CurrentUser, db: DbSession
+) -> CommentContext:
+    denied = ForbiddenError(
+        "COMMENT_ORGANIZATION_ACCESS_DENIED", "You do not have access to this comment."
+    )
+    comment = CommentRepository(db).get_by_id(comment_id)
+    pctx = build_project_context(comment.project if comment else None, current_user, db, denied)
+    return CommentContext(comment=comment, project=pctx)  # type: ignore[arg-type]
+
+
+CommentContextDep = Annotated[CommentContext, Depends(get_comment_context)]
+
+
+def get_editable_comment(cctx: CommentContextDep) -> CommentContext:
+    if not cctx.can_edit:
+        raise ForbiddenError("COMMENT_EDIT_DENIED", "You can only edit your own comments.")
+    return cctx
+
+
+def get_deletable_comment(cctx: CommentContextDep) -> CommentContext:
+    if not cctx.can_delete:
+        raise ForbiddenError("COMMENT_DELETE_DENIED", "You can only delete your own comments.")
+    return cctx
+
+
+EditableComment = Annotated[CommentContext, Depends(get_editable_comment)]
+DeletableComment = Annotated[CommentContext, Depends(get_deletable_comment)]
+
+
+# ---------- request info + audit ----------
+def get_request_info(request: Request) -> RequestInfo:
+    user_agent = request.headers.get("user-agent")
+    return RequestInfo(
+        ip_address=request.client.host if request.client else None,
+        user_agent=user_agent[:255] if user_agent else None,
+    )
+
+
+RequestInfoDep = Annotated[RequestInfo, Depends(get_request_info)]
+
+
+def get_audit_service(db: DbSession, request_info: RequestInfoDep) -> AuditService:
+    return AuditService(db, request_info)
+
+
+AuditServiceDep = Annotated[AuditService, Depends(get_audit_service)]
 
 
 # ---------- services ----------
@@ -227,9 +296,14 @@ def get_dashboard_service(db: DbSession) -> DashboardService:
     return DashboardService(db)
 
 
+def get_comment_service(db: DbSession, audit: AuditServiceDep) -> CommentService:
+    return CommentService(db, audit)
+
+
 AuthServiceDep = Annotated[AuthService, Depends(get_auth_service)]
 OrganizationServiceDep = Annotated[OrganizationService, Depends(get_organization_service)]
 ProjectServiceDep = Annotated[ProjectService, Depends(get_project_service)]
 TaskServiceDep = Annotated[TaskService, Depends(get_task_service)]
 TaskDependencyServiceDep = Annotated[TaskDependencyService, Depends(get_task_dependency_service)]
 DashboardServiceDep = Annotated[DashboardService, Depends(get_dashboard_service)]
+CommentServiceDep = Annotated[CommentService, Depends(get_comment_service)]

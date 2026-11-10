@@ -2,10 +2,19 @@ from dataclasses import dataclass
 
 from app.core.enums import OrgRole
 from app.core.permissions import has_min_role
+from app.models.comment import Comment
 from app.models.organization import Organization, OrganizationMember
 from app.models.project import Project
-from app.models.user import User
 from app.models.task import Task
+from app.models.user import User
+
+
+@dataclass(frozen=True)
+class RequestInfo:
+    """Facts about the HTTP request that the audit log records."""
+
+    ip_address: str | None
+    user_agent: str | None
 
 
 @dataclass
@@ -35,6 +44,7 @@ class ProjectContext:
         return self.org.is_admin or (
             self.is_owner and has_min_role(self.org.role, OrgRole.PROJECT_MANAGER)
         )
+
 
 @dataclass
 class TaskContext:
@@ -69,3 +79,27 @@ class TaskContext:
         return has_min_role(self.role, OrgRole.TEAM_MEMBER) and (
             self.is_manager or self.task.reporter_id == self.user.id
         )
+
+
+@dataclass
+class CommentContext:
+    comment: Comment
+    project: ProjectContext
+
+    @property
+    def user(self) -> User:
+        return self.project.org.user
+
+    @property
+    def is_author(self) -> bool:
+        return self.comment.author_id == self.user.id
+
+    @property
+    def can_edit(self) -> bool:
+        # A demoted viewer must not keep editing rights.
+        return self.is_author and has_min_role(self.project.org.role, OrgRole.TEAM_MEMBER)
+
+    @property
+    def can_delete(self) -> bool:
+        # Removing your own words is always allowed.
+        return self.is_author

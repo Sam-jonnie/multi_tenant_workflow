@@ -1,3 +1,5 @@
+from app.models.audit_log import AuditLog
+from app.models.comment import Comment
 from app.models.organization import Organization, OrganizationMember
 from app.models.project import Project, ProjectMember
 from app.models.refresh_token import RefreshToken
@@ -15,4 +17,6 @@ __all__ = [
     "Task",
     "TaskAssignmentHistory",
     "TaskDependency",
+    "Comment",
+    "AuditLog",
 ]

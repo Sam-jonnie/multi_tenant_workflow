@@ -43,6 +43,18 @@ class ConflictError(AppException):
     status_code = 409
 
 
+class PayloadTooLargeError(AppException):
+    status_code = 413
+
+
+class UnsupportedMediaTypeError(AppException):
+    status_code = 415
+
+
+class TooManyRequestsError(AppException):
+    status_code = 429
+
+
 def _error_response(
     status_code: int,
     code: str,

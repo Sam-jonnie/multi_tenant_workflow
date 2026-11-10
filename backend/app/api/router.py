@@ -1,7 +1,9 @@
 from fastapi import APIRouter
 
 from app.api.routes import (
+    audit,
     auth,
+    comments,
     dashboard,
     members,
     organizations,
@@ -17,4 +19,6 @@ api_router.include_router(members.router)
 api_router.include_router(projects.router)
 api_router.include_router(tasks.router)
 api_router.include_router(task_dependencies.router)
+api_router.include_router(comments.router)
 api_router.include_router(dashboard.router)
+api_router.include_router(audit.router)
