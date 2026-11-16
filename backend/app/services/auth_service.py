@@ -4,7 +4,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.core.enums import TokenType
+from app.core.enums import AuditAction, AuditEntity, TokenType
 from app.core.exceptions import (
     BadRequestError,
     ConflictError,
@@ -29,11 +29,13 @@ from app.schemas.auth import (
     RegisterRequest,
     TokenPair,
 )
+from app.services.audit_service import AuditService
 
 
 class AuthService:
-    def __init__(self, db: Session) -> None:
+    def __init__(self, db: Session, audit: AuditService) -> None:
         self.db = db
+        self.audit = audit
         self.users = UserRepository(db)
         self.tokens = RefreshTokenRepository(db)
 
@@ -54,6 +56,7 @@ class AuthService:
         )
         try:
             self.users.add(user)
+            self._log_user_event(AuditAction.USER_REGISTERED, user.id)
             self.db.commit()
         except IntegrityError:  # two simultaneous registrations; the DB constraint wins
             self.db.rollback()
@@ -64,13 +67,17 @@ class AuthService:
         user = self.users.get_by_email(data.email.lower())
         if user is None:
             verify_password(data.password, DUMMY_HASH)  # constant-ish time
+            self._record_failed_login(None, "unknown_email")
             raise UnauthorizedError("INVALID_CREDENTIALS", "Invalid email or password.")
         if not verify_password(data.password, user.hashed_password):
+            self._record_failed_login(user.id, "wrong_password")
             raise UnauthorizedError("INVALID_CREDENTIALS", "Invalid email or password.")
         if not user.is_active:
+            self._record_failed_login(user.id, "inactive")
             raise ForbiddenError("USER_INACTIVE", "Your account is deactivated.")
 
         pair = self._issue_tokens(user)
+        self._log_user_event(AuditAction.LOGIN, user.id)
         self.db.commit()
         return pair
 
@@ -100,6 +107,7 @@ class AuthService:
         stored = self.tokens.get_by_jti(payload["jti"])
         if stored is not None and stored.revoked_at is None:
             self.tokens.revoke(stored)
+            self._log_user_event(AuditAction.LOGOUT, stored.user_id)
             self.db.commit()
 
     def change_password(self, user: User, data: ChangePasswordRequest) -> None:
@@ -110,8 +118,10 @@ class AuthService:
 
         user.hashed_password = hash_password(data.new_password)
         self.tokens.revoke_all_for_user(user.id)  # log out every device
+        self._log_user_event(AuditAction.PASSWORD_CHANGED, user.id)
         self.db.commit()
 
+    # ---------- helpers ----------
     def _issue_tokens(self, user: User, family_id: str | None = None) -> TokenPair:
         family_id = family_id or uuid.uuid4().hex
         access = create_access_token(user.id)
@@ -124,3 +134,18 @@ class AuthService:
             refresh_token=refresh,
             expires_in=settings.access_token_expire_minutes * 60,
         )
+
+    def _log_user_event(self, action: AuditAction, user_id: int | None, **metadata: object) -> None:
+        self.audit.log(
+            action,
+            entity_type=AuditEntity.USER,
+            entity_id=user_id,
+            user_id=user_id,
+            metadata=dict(metadata),
+        )
+
+    def _record_failed_login(self, user_id: int | None, reason: str) -> None:
+        # No business change to attach this to, so it is committed on its own.
+        # The attempted e-mail is NOT stored: people sometimes type passwords there.
+        self._log_user_event(AuditAction.LOGIN_FAILED, user_id, reason=reason)
+        self.db.commit()

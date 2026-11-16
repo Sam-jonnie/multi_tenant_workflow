@@ -2,6 +2,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.context import TaskContext
+from app.core.enums import AuditAction, AuditEntity
 from app.core.exceptions import BadRequestError, ConflictError, NotFoundError
 from app.core.graph import would_create_cycle
 from app.core.rules import ensure_project_writable
@@ -10,11 +11,13 @@ from app.models.task import Task
 from app.models.task_dependency import TaskDependency
 from app.repositories.task_dependency_repository import TaskDependencyRepository
 from app.repositories.task_repository import TaskRepository
+from app.services.audit_service import AuditService
 
 
 class TaskDependencyService:
-    def __init__(self, db: Session) -> None:
+    def __init__(self, db: Session, audit: AuditService) -> None:
         self.db = db
+        self.audit = audit
         self.tasks = TaskRepository(db)
         self.dependencies = TaskDependencyRepository(db)
 
@@ -55,7 +58,12 @@ class TaskDependencyService:
             )
 
         try:
-            self.dependencies.add(TaskDependency(task_id=task.id, depends_on_id=prerequisite.id))
+            dependency = self.dependencies.add(
+                TaskDependency(task_id=task.id, depends_on_id=prerequisite.id)
+            )
+            self._log(
+                AuditAction.TASK_DEPENDENCY_ADDED, task, dependency.id, tctx, prerequisite.id
+            )
             self.db.commit()
         except IntegrityError:
             self.db.rollback()
@@ -63,9 +71,34 @@ class TaskDependencyService:
         return self.list_for_task(tctx)
 
     def remove(self, tctx: TaskContext, depends_on_id: int) -> None:
-        ensure_project_writable(tctx.task.project)
-        dependency = self.dependencies.get(tctx.task.id, depends_on_id)
+        task = tctx.task
+        ensure_project_writable(task.project)
+        dependency = self.dependencies.get(task.id, depends_on_id)
         if dependency is None:
             raise NotFoundError("DEPENDENCY_NOT_FOUND", "This dependency does not exist.")
+
+        dependency_id = dependency.id
         self.dependencies.delete(dependency)
+        self._log(AuditAction.TASK_DEPENDENCY_REMOVED, task, dependency_id, tctx, depends_on_id)
         self.db.commit()
+
+    def _log(
+        self,
+        action: AuditAction,
+        task: Task,
+        dependency_id: int,
+        tctx: TaskContext,
+        depends_on_id: int,
+    ) -> None:
+        self.audit.log(
+            action,
+            entity_type=AuditEntity.TASK_DEPENDENCY,
+            entity_id=dependency_id,
+            user_id=tctx.user.id,
+            organization_id=task.project.organization_id,
+            metadata={
+                "project_id": task.project_id,
+                "task_id": task.id,
+                "depends_on_id": depends_on_id,
+            },
+        )

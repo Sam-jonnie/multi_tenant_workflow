@@ -1,9 +1,11 @@
 from datetime import UTC, datetime, time, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session, joinedload
 
+from app.core.enums import AuditEntity
 from app.models.audit_log import AuditLog
+from app.models.organization import OrganizationMember
 from app.repositories.query_utils import order_by_clauses, paginate
 from app.schemas.audit import AuditListQuery
 
@@ -19,7 +21,20 @@ class AuditRepository:
     # There is deliberately no update() and no delete() in this class.
 
     def list_for_org(self, org_id: int, query: AuditListQuery) -> tuple[list[AuditLog], int]:
-        stmt = select(AuditLog).where(AuditLog.organization_id == org_id)  # tenant boundary
+        active_member_ids = select(OrganizationMember.user_id).where(
+            OrganizationMember.organization_id == org_id,
+            OrganizationMember.is_active.is_(True),
+        )
+        stmt = select(AuditLog).where(
+            or_(
+                AuditLog.organization_id == org_id,  # tenant boundary
+                and_(  # the one exception: account events of this org's members
+                    AuditLog.organization_id.is_(None),
+                    AuditLog.entity_type == AuditEntity.USER,
+                    AuditLog.user_id.in_(active_member_ids),
+                ),
+            )
+        )
 
         if query.action is not None:
             stmt = stmt.where(AuditLog.action == query.action)

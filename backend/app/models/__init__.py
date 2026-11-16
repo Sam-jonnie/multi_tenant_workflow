@@ -1,3 +1,4 @@
+from app.models.attachment import Attachment
 from app.models.audit_log import AuditLog
 from app.models.comment import Comment
 from app.models.organization import Organization, OrganizationMember
@@ -19,4 +20,5 @@ __all__ = [
     "TaskDependency",
     "Comment",
     "AuditLog",
+    "Attachment",
 ]

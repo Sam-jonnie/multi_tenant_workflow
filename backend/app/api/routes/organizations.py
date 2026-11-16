@@ -41,5 +41,5 @@ def get_organization(org_id: int, ctx: OrgViewer) -> ApiResponse[OrganizationRea
 def update_organization(
     org_id: int, payload: OrganizationUpdate, ctx: OrgAdmin, service: OrganizationServiceDep
 ) -> ApiResponse[OrganizationRead]:
-    org = service.update(ctx.organization, payload)
+    org = service.update(ctx, payload)
     return ApiResponse[OrganizationRead](data=OrganizationRead.model_validate(org))

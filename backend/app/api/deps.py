@@ -5,6 +5,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
 from app.core.context import (
+    AttachmentContext,
     CommentContext,
     OrgContext,
     ProjectContext,
@@ -18,12 +19,14 @@ from app.core.permissions import has_min_role
 from app.core.security import decode_token
 from app.models.project import Project
 from app.models.user import User
+from app.repositories.attachment_repository import AttachmentRepository
 from app.repositories.comment_repository import CommentRepository
 from app.repositories.membership_repository import MembershipRepository
 from app.repositories.organization_repository import OrganizationRepository
 from app.repositories.project_repository import ProjectMemberRepository, ProjectRepository
 from app.repositories.task_repository import TaskRepository
 from app.repositories.user_repository import UserRepository
+from app.services.attachment_service import AttachmentService
 from app.services.audit_service import AuditService
 from app.services.auth_service import AuthService
 from app.services.comment_service import CommentService
@@ -252,6 +255,35 @@ EditableComment = Annotated[CommentContext, Depends(get_editable_comment)]
 DeletableComment = Annotated[CommentContext, Depends(get_deletable_comment)]
 
 
+# ---------- attachment context ----------
+def get_attachment_context(
+    attachment_id: int, current_user: CurrentUser, db: DbSession
+) -> AttachmentContext:
+    denied = ForbiddenError(
+        "ATTACHMENT_ORGANIZATION_ACCESS_DENIED", "You do not have access to this file."
+    )
+    attachment = AttachmentRepository(db).get_by_id(attachment_id)
+    pctx = build_project_context(
+        attachment.project if attachment else None, current_user, db, denied
+    )
+    return AttachmentContext(attachment=attachment, project=pctx)  # type: ignore[arg-type]
+
+
+AttachmentContextDep = Annotated[AttachmentContext, Depends(get_attachment_context)]
+
+
+def get_deletable_attachment(actx: AttachmentContextDep) -> AttachmentContext:
+    if not actx.can_delete:
+        raise ForbiddenError(
+            "ATTACHMENT_DELETE_DENIED",
+            "Only the uploader or a project manager can delete this file.",
+        )
+    return actx
+
+
+DeletableAttachment = Annotated[AttachmentContext, Depends(get_deletable_attachment)]
+
+
 # ---------- request info + audit ----------
 def get_request_info(request: Request) -> RequestInfo:
     user_agent = request.headers.get("user-agent")
@@ -272,24 +304,24 @@ AuditServiceDep = Annotated[AuditService, Depends(get_audit_service)]
 
 
 # ---------- services ----------
-def get_auth_service(db: DbSession) -> AuthService:
-    return AuthService(db)
+def get_auth_service(db: DbSession, audit: AuditServiceDep) -> AuthService:
+    return AuthService(db, audit)
 
 
-def get_organization_service(db: DbSession) -> OrganizationService:
-    return OrganizationService(db)
+def get_organization_service(db: DbSession, audit: AuditServiceDep) -> OrganizationService:
+    return OrganizationService(db, audit)
 
 
-def get_project_service(db: DbSession) -> ProjectService:
-    return ProjectService(db)
+def get_project_service(db: DbSession, audit: AuditServiceDep) -> ProjectService:
+    return ProjectService(db, audit)
 
 
-def get_task_service(db: DbSession) -> TaskService:
-    return TaskService(db)
+def get_task_service(db: DbSession, audit: AuditServiceDep) -> TaskService:
+    return TaskService(db, audit)
 
 
-def get_task_dependency_service(db: DbSession) -> TaskDependencyService:
-    return TaskDependencyService(db)
+def get_task_dependency_service(db: DbSession, audit: AuditServiceDep) -> TaskDependencyService:
+    return TaskDependencyService(db, audit)
 
 
 def get_dashboard_service(db: DbSession) -> DashboardService:
@@ -300,6 +332,10 @@ def get_comment_service(db: DbSession, audit: AuditServiceDep) -> CommentService
     return CommentService(db, audit)
 
 
+def get_attachment_service(db: DbSession, audit: AuditServiceDep) -> AttachmentService:
+    return AttachmentService(db, audit)
+
+
 AuthServiceDep = Annotated[AuthService, Depends(get_auth_service)]
 OrganizationServiceDep = Annotated[OrganizationService, Depends(get_organization_service)]
 ProjectServiceDep = Annotated[ProjectService, Depends(get_project_service)]
@@ -307,3 +343,4 @@ TaskServiceDep = Annotated[TaskService, Depends(get_task_service)]
 TaskDependencyServiceDep = Annotated[TaskDependencyService, Depends(get_task_dependency_service)]
 DashboardServiceDep = Annotated[DashboardService, Depends(get_dashboard_service)]
 CommentServiceDep = Annotated[CommentService, Depends(get_comment_service)]
+AttachmentServiceDep = Annotated[AttachmentService, Depends(get_attachment_service)]

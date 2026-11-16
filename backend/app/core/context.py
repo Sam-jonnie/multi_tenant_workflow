@@ -2,6 +2,7 @@ from dataclasses import dataclass
 
 from app.core.enums import OrgRole
 from app.core.permissions import has_min_role
+from app.models.attachment import Attachment
 from app.models.comment import Comment
 from app.models.organization import Organization, OrganizationMember
 from app.models.project import Project
@@ -103,3 +104,21 @@ class CommentContext:
     def can_delete(self) -> bool:
         # Removing your own words is always allowed.
         return self.is_author
+
+
+@dataclass
+class AttachmentContext:
+    attachment: Attachment
+    project: ProjectContext
+
+    @property
+    def user(self) -> User:
+        return self.project.org.user
+
+    @property
+    def is_uploader(self) -> bool:
+        return self.attachment.uploaded_by_id == self.user.id
+
+    @property
+    def can_delete(self) -> bool:
+        return self.is_uploader or has_min_role(self.project.org.role, OrgRole.PROJECT_MANAGER)

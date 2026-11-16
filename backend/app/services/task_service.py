@@ -3,10 +3,11 @@ from datetime import UTC, datetime
 from sqlalchemy.orm import Session
 
 from app.core.context import OrgContext, ProjectContext, TaskContext
-from app.core.enums import OrgRole, TaskPriority, TaskStatus
+from app.core.enums import AuditAction, AuditEntity, OrgRole, TaskPriority, TaskStatus
 from app.core.exceptions import BadRequestError, ConflictError, ForbiddenError
 from app.core.permissions import has_min_role
 from app.core.rules import ensure_project_writable
+from app.core.storage import storage
 from app.core.workflow import (
     STATUSES_BLOCKED_BY_DEPENDENCIES,
     STATUSES_REQUIRING_ASSIGNEE,
@@ -15,6 +16,7 @@ from app.core.workflow import (
 )
 from app.models.project import Project
 from app.models.task import Task, TaskAssignmentHistory
+from app.repositories.attachment_repository import AttachmentRepository
 from app.repositories.membership_repository import MembershipRepository
 from app.repositories.project_repository import ProjectMemberRepository
 from app.repositories.task_dependency_repository import TaskDependencyRepository
@@ -22,14 +24,17 @@ from app.repositories.task_repository import TaskAssignmentRepository, TaskRepos
 from app.repositories.user_repository import UserRepository
 from app.schemas.common import PageParams
 from app.schemas.task import TaskCreate, TaskListQuery, TaskMove, TaskUpdate
+from app.services.audit_service import AuditService
 
 
 class TaskService:
-    def __init__(self, db: Session) -> None:
+    def __init__(self, db: Session, audit: AuditService) -> None:
         self.db = db
+        self.audit = audit
         self.tasks = TaskRepository(db)
         self.history = TaskAssignmentRepository(db)
         self.dependencies = TaskDependencyRepository(db)
+        self.attachments = AttachmentRepository(db)
         self.users = UserRepository(db)
         self.org_members = MembershipRepository(db)
         self.project_members = ProjectMemberRepository(db)
@@ -58,8 +63,17 @@ class TaskService:
             position=self.tasks.max_position(project.id, data.status) + 1,
         )
         self.tasks.add(task)
+        self._log(AuditAction.TASK_CREATED, task, project, user.id, title=task.title)
         if data.assignee_id is not None:
             self._record_assignment(task, None, data.assignee_id, user.id)
+            self._log(
+                AuditAction.TASK_ASSIGNED,
+                task,
+                project,
+                user.id,
+                from_user_id=None,
+                to_user_id=data.assignee_id,
+            )
         self.db.commit()
         self.db.refresh(task)
         return task
@@ -71,8 +85,17 @@ class TaskService:
     def update(self, tctx: TaskContext, data: TaskUpdate) -> Task:
         task = tctx.task
         ensure_project_writable(task.project)
-        for field, value in data.model_dump(exclude_unset=True).items():
+        changes = data.model_dump(exclude_unset=True)
+        for field, value in changes.items():
             setattr(task, field, value)
+        if changes:
+            self._log(
+                AuditAction.TASK_UPDATED,
+                task,
+                task.project,
+                tctx.user.id,
+                changed_fields=sorted(changes),
+            )
         self.db.commit()
         self.db.refresh(task)
         return task
@@ -80,7 +103,19 @@ class TaskService:
     def change_priority(self, tctx: TaskContext, priority: TaskPriority) -> Task:
         task = tctx.task
         ensure_project_writable(task.project)
+        old_priority = task.priority
+        if priority == old_priority:
+            return task
         task.priority = priority
+        self._log(
+            AuditAction.TASK_UPDATED,
+            task,
+            task.project,
+            tctx.user.id,
+            changed_fields=["priority"],
+            from_priority=old_priority.value,
+            to_priority=priority.value,
+        )
         self.db.commit()
         self.db.refresh(task)
         return task
@@ -90,17 +125,23 @@ class TaskService:
             raise ForbiddenError(
                 "TASK_DELETE_DENIED", "Only a project manager or the reporter can delete a task."
             )
-        ensure_project_writable(tctx.task.project)
-        self.tasks.delete(tctx.task)
+        task = tctx.task
+        ensure_project_writable(task.project)
+
+        file_paths = self.attachments.paths_for_task(task.id)  # rows vanish by cascade
+        self._log(AuditAction.TASK_DELETED, task, task.project, tctx.user.id, title=task.title)
+        self.tasks.delete(task)
         self.db.commit()
+        storage.delete_many(file_paths)  # only after the commit succeeded
 
     # ---------- workflow ----------
     def change_status(self, tctx: TaskContext, new_status: TaskStatus) -> Task:
         task = tctx.task
         ensure_project_writable(task.project)
+        old_status = task.status
         ensure_transition(
             TASK_TRANSITIONS,
-            task.status,
+            old_status,
             new_status,
             code="INVALID_TASK_STATUS_TRANSITION",
             entity="task",
@@ -108,6 +149,15 @@ class TaskService:
         self._ensure_assignee_present(task, new_status)
         self._ensure_dependencies_satisfied(task, new_status)
         self._apply_status(task, new_status, position=None)
+        self._log(
+            AuditAction.TASK_STATUS_CHANGED,
+            task,
+            task.project,
+            tctx.user.id,
+            from_status=old_status.value,
+            to_status=new_status.value,
+            via="status",
+        )
         self.db.commit()
         self.db.refresh(task)
         return task
@@ -115,10 +165,12 @@ class TaskService:
     def move(self, tctx: TaskContext, data: TaskMove) -> Task:
         task = tctx.task
         ensure_project_writable(task.project)
-        if data.status != task.status:  # moving to another column = a status change
+        old_status = task.status
+        status_changes = data.status != old_status
+        if status_changes:  # moving to another column = a status change
             ensure_transition(
                 TASK_TRANSITIONS,
-                task.status,
+                old_status,
                 data.status,
                 code="INVALID_TASK_STATUS_TRANSITION",
                 entity="task",
@@ -126,6 +178,16 @@ class TaskService:
             self._ensure_assignee_present(task, data.status)
             self._ensure_dependencies_satisfied(task, data.status)
         self._apply_status(task, data.status, position=data.position)
+        if status_changes:  # a pure reorder inside a column is not worth an audit row
+            self._log(
+                AuditAction.TASK_STATUS_CHANGED,
+                task,
+                task.project,
+                tctx.user.id,
+                from_status=old_status.value,
+                to_status=data.status.value,
+                via="move",
+            )
         self.db.commit()
         self.db.refresh(task)
         return task
@@ -134,7 +196,8 @@ class TaskService:
     def assign(self, tctx: TaskContext, assignee_id: int | None) -> Task:
         task = tctx.task
         ensure_project_writable(task.project)
-        if assignee_id == task.assignee_id:
+        old_assignee_id = task.assignee_id
+        if assignee_id == old_assignee_id:
             return task  # nothing changed, nothing to record
 
         if assignee_id is not None:
@@ -145,8 +208,16 @@ class TaskService:
                 f"A task in '{task.status}' must keep an assignee. Reassign it instead.",
             )
 
-        self._record_assignment(task, task.assignee_id, assignee_id, tctx.user.id)
+        self._record_assignment(task, old_assignee_id, assignee_id, tctx.user.id)
         task.assignee_id = assignee_id
+        self._log(
+            AuditAction.TASK_ASSIGNED,
+            task,
+            task.project,
+            tctx.user.id,
+            from_user_id=old_assignee_id,
+            to_user_id=assignee_id,
+        )
         self.db.commit()
         self.db.refresh(task)
         return task
@@ -155,6 +226,23 @@ class TaskService:
         return self.history.list_for_task(tctx.task.id, params)
 
     # ---------- helpers ----------
+    def _log(
+        self,
+        action: AuditAction,
+        task: Task,
+        project: Project,
+        user_id: int,
+        **metadata: object,
+    ) -> None:
+        self.audit.log(
+            action,
+            entity_type=AuditEntity.TASK,
+            entity_id=task.id,
+            user_id=user_id,
+            organization_id=project.organization_id,
+            metadata={"project_id": project.id, **metadata},
+        )
+
     @staticmethod
     def _ensure_assignee_present(task: Task, new_status: TaskStatus) -> None:
         if new_status in STATUSES_REQUIRING_ASSIGNEE and task.assignee_id is None:

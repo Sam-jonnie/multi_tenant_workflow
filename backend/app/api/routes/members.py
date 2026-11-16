@@ -43,7 +43,7 @@ def list_members(
 def add_member(
     org_id: int, payload: MemberAdd, ctx: OrgAdmin, service: OrganizationServiceDep
 ) -> ApiResponse[MemberRead]:
-    member = service.add_member(ctx.organization, payload)
+    member = service.add_member(ctx, payload)
     return ApiResponse[MemberRead](data=_to_read(member), message="Member added.")
 
 
@@ -55,7 +55,7 @@ def change_member_role(
     ctx: OrgAdmin,
     service: OrganizationServiceDep,
 ) -> ApiResponse[MemberRead]:
-    member = service.change_role(ctx.organization, user_id, payload.role)
+    member = service.change_role(ctx, user_id, payload.role)
     return ApiResponse[MemberRead](data=_to_read(member))
 
 
@@ -67,7 +67,7 @@ def set_member_status(
     ctx: OrgAdmin,
     service: OrganizationServiceDep,
 ) -> ApiResponse[MemberRead]:
-    member = service.set_member_active(ctx.organization, user_id, payload.is_active)
+    member = service.set_member_active(ctx, user_id, payload.is_active)
     return ApiResponse[MemberRead](data=_to_read(member))
 
 
@@ -75,5 +75,5 @@ def set_member_status(
 def remove_member(
     org_id: int, user_id: int, ctx: OrgAdmin, service: OrganizationServiceDep
 ) -> ApiResponse[None]:
-    service.remove_member(ctx.organization, user_id)
+    service.remove_member(ctx, user_id)
     return ApiResponse[None](message="Member removed.")
