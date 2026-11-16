@@ -7,6 +7,7 @@ from app.api.routes import (
     comments,
     dashboard,
     members,
+    notifications,
     organizations,
     projects,
     task_dependencies,
@@ -22,5 +23,6 @@ api_router.include_router(tasks.router)
 api_router.include_router(task_dependencies.router)
 api_router.include_router(comments.router)
 api_router.include_router(attachments.router)
+api_router.include_router(notifications.router)
 api_router.include_router(dashboard.router)
 api_router.include_router(audit.router)

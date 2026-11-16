@@ -1,6 +1,7 @@
 from app.models.attachment import Attachment
 from app.models.audit_log import AuditLog
 from app.models.comment import Comment
+from app.models.notification import Notification
 from app.models.organization import Organization, OrganizationMember
 from app.models.project import Project, ProjectMember
 from app.models.refresh_token import RefreshToken
@@ -21,4 +22,5 @@ __all__ = [
     "Comment",
     "AuditLog",
     "Attachment",
+    "Notification",
 ]

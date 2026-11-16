@@ -20,12 +20,16 @@ from app.repositories.task_repository import TaskRepository
 from app.schemas.common import PageParams
 from app.schemas.project import ProjectCreate, ProjectListQuery, ProjectUpdate
 from app.services.audit_service import AuditService
+from app.services.notification_service import NotificationService
 
 
 class ProjectService:
-    def __init__(self, db: Session, audit: AuditService) -> None:
+    def __init__(
+        self, db: Session, audit: AuditService, notifications: NotificationService
+    ) -> None:
         self.db = db
         self.audit = audit
+        self.notifications = notifications
         self.projects = ProjectRepository(db)
         self.members = ProjectMemberRepository(db)
         self.org_members = MembershipRepository(db)
@@ -179,10 +183,12 @@ class ProjectService:
                 entity_id=member.id,
                 member_user_id=user_id,
             )
+            self.notifications.project_member_added(project, pctx.org.user, user_id)
             self.db.commit()
         except IntegrityError:
             self.db.rollback()
             raise ConflictError("PROJECT_MEMBER_EXISTS", "User is already a project member.") from None
+        self.notifications.dispatch()
         return member
 
     def remove_member(self, pctx: ProjectContext, user_id: int) -> None:

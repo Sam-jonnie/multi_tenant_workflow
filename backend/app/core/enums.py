@@ -44,6 +44,14 @@ class NotificationType(StrEnum):
     TASK_OVERDUE = "task_overdue"
 
 
+class NotificationEntity(StrEnum):
+    """What a notification points at, so the frontend knows where to navigate."""
+
+    PROJECT = "project"
+    TASK = "task"
+    COMMENT = "comment"
+
+
 class AuditAction(StrEnum):
     # authentication
     USER_REGISTERED = "user_registered"
@@ -94,7 +102,7 @@ class AuditEntity(StrEnum):
 
 
 class FileKind(StrEnum):
-    """What a file REALLY is, decided from its bytes (used in Part 2)."""
+    """What a file REALLY is, decided from its bytes."""
 
     PNG = "png"
     JPEG = "jpeg"

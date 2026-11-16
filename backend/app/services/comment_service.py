@@ -9,35 +9,45 @@ from app.core.mentions import extract_mentions
 from app.core.rules import ensure_project_writable
 from app.models.comment import Comment
 from app.models.project import Project
+from app.models.task import Task
 from app.models.user import User
 from app.repositories.comment_repository import CommentRepository
+from app.repositories.task_repository import TaskRepository
 from app.schemas.comment import CommentCreate, CommentListQuery, CommentUpdate
 from app.services.audit_service import AuditService
+from app.services.notification_service import NotificationService
 
 MAX_MENTIONS = 20
 
 
 class CommentService:
-    def __init__(self, db: Session, audit: AuditService) -> None:
+    def __init__(
+        self, db: Session, audit: AuditService, notifications: NotificationService
+    ) -> None:
         self.db = db
         self.audit = audit
+        self.notifications = notifications
         self.comments = CommentRepository(db)
+        self.tasks = TaskRepository(db)
 
     # ---------- create ----------
     def add_to_project(self, pctx: ProjectContext, data: CommentCreate) -> Comment:
-        return self._create(pctx, task_id=None, body=data.body)
+        return self._create(pctx, task=None, body=data.body)
 
     def add_to_task(self, tctx: TaskContext, data: CommentCreate) -> Comment:
-        return self._create(tctx.project, task_id=tctx.task.id, body=data.body)
+        return self._create(tctx.project, task=tctx.task, body=data.body)
 
-    def _create(self, pctx: ProjectContext, task_id: int | None, body: str) -> Comment:
+    def _create(self, pctx: ProjectContext, task: Task | None, body: str) -> Comment:
         project = pctx.project
         user = pctx.org.user
         ensure_project_writable(project)
 
         mentioned = self._resolve_mentions(project, user.id, body)
         comment = Comment(
-            project_id=project.id, task_id=task_id, author_id=user.id, body=body
+            project_id=project.id,
+            task_id=task.id if task is not None else None,
+            author_id=user.id,
+            body=body,
         )
         comment.mentions = mentioned
         self.comments.add(comment)
@@ -50,13 +60,15 @@ class CommentService:
             organization_id=project.organization_id,
             metadata={
                 "project_id": project.id,
-                "task_id": task_id,
+                "task_id": comment.task_id,
                 "mentioned_user_ids": [u.id for u in mentioned],
             },
         )
+        self.notifications.comment_added(comment, project, user, task, mentioned)
         self.db.commit()
+        self.notifications.dispatch()
         self.db.refresh(comment)
-        return comment  # Day 6: send notifications to `mentioned` here
+        return comment
 
     # ---------- read ----------
     def list_for_project(
@@ -78,6 +90,7 @@ class CommentService:
 
         old_ids = {u.id for u in comment.mentions}
         new_mentions = self._resolve_mentions(comment.project, cctx.user.id, data.body)
+        newly_mentioned = [u for u in new_mentions if u.id not in old_ids]
 
         comment.body = data.body
         comment.mentions = new_mentions
@@ -92,12 +105,18 @@ class CommentService:
             metadata={
                 "project_id": comment.project_id,
                 "task_id": comment.task_id,
-                "new_mentioned_user_ids": [u.id for u in new_mentions if u.id not in old_ids],
+                "new_mentioned_user_ids": [u.id for u in newly_mentioned],
             },
         )
+        if newly_mentioned:
+            task = self.tasks.get_by_id(comment.task_id) if comment.task_id else None
+            self.notifications.mentioned_in_comment(
+                comment, comment.project, cctx.user, task, newly_mentioned
+            )
         self.db.commit()
+        self.notifications.dispatch()
         self.db.refresh(comment)
-        return comment  # Day 6: notify only the users in new_mentioned_user_ids
+        return comment
 
     def delete(self, cctx: CommentContext) -> None:
         comment = cctx.comment

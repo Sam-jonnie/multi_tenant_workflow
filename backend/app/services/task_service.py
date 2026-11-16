@@ -25,12 +25,16 @@ from app.repositories.user_repository import UserRepository
 from app.schemas.common import PageParams
 from app.schemas.task import TaskCreate, TaskListQuery, TaskMove, TaskUpdate
 from app.services.audit_service import AuditService
+from app.services.notification_service import NotificationService
 
 
 class TaskService:
-    def __init__(self, db: Session, audit: AuditService) -> None:
+    def __init__(
+        self, db: Session, audit: AuditService, notifications: NotificationService
+    ) -> None:
         self.db = db
         self.audit = audit
+        self.notifications = notifications
         self.tasks = TaskRepository(db)
         self.history = TaskAssignmentRepository(db)
         self.dependencies = TaskDependencyRepository(db)
@@ -74,7 +78,9 @@ class TaskService:
                 from_user_id=None,
                 to_user_id=data.assignee_id,
             )
+            self.notifications.task_assigned(task, project, user, None, data.assignee_id)
         self.db.commit()
+        self.notifications.dispatch()
         self.db.refresh(task)
         return task
 
@@ -158,7 +164,11 @@ class TaskService:
             to_status=new_status.value,
             via="status",
         )
+        self.notifications.task_status_changed(
+            task, task.project, tctx.user, old_status, new_status
+        )
         self.db.commit()
+        self.notifications.dispatch()
         self.db.refresh(task)
         return task
 
@@ -188,7 +198,11 @@ class TaskService:
                 to_status=data.status.value,
                 via="move",
             )
+            self.notifications.task_status_changed(
+                task, task.project, tctx.user, old_status, data.status
+            )
         self.db.commit()
+        self.notifications.dispatch()
         self.db.refresh(task)
         return task
 
@@ -218,7 +232,11 @@ class TaskService:
             from_user_id=old_assignee_id,
             to_user_id=assignee_id,
         )
+        self.notifications.task_assigned(
+            task, task.project, tctx.user, old_assignee_id, assignee_id
+        )
         self.db.commit()
+        self.notifications.dispatch()
         self.db.refresh(task)
         return task
 

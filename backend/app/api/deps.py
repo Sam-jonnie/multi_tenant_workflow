@@ -31,6 +31,7 @@ from app.services.audit_service import AuditService
 from app.services.auth_service import AuthService
 from app.services.comment_service import CommentService
 from app.services.dashboard_service import DashboardService
+from app.services.notification_service import NotificationService
 from app.services.organization_service import OrganizationService
 from app.services.project_service import ProjectService
 from app.services.task_dependency_service import TaskDependencyService
@@ -284,7 +285,7 @@ def get_deletable_attachment(actx: AttachmentContextDep) -> AttachmentContext:
 DeletableAttachment = Annotated[AttachmentContext, Depends(get_deletable_attachment)]
 
 
-# ---------- request info + audit ----------
+# ---------- request info + audit + notifications ----------
 def get_request_info(request: Request) -> RequestInfo:
     user_agent = request.headers.get("user-agent")
     return RequestInfo(
@@ -300,7 +301,12 @@ def get_audit_service(db: DbSession, request_info: RequestInfoDep) -> AuditServi
     return AuditService(db, request_info)
 
 
+def get_notification_service(db: DbSession) -> NotificationService:
+    return NotificationService(db)
+
+
 AuditServiceDep = Annotated[AuditService, Depends(get_audit_service)]
+NotificationServiceDep = Annotated[NotificationService, Depends(get_notification_service)]
 
 
 # ---------- services ----------
@@ -312,12 +318,16 @@ def get_organization_service(db: DbSession, audit: AuditServiceDep) -> Organizat
     return OrganizationService(db, audit)
 
 
-def get_project_service(db: DbSession, audit: AuditServiceDep) -> ProjectService:
-    return ProjectService(db, audit)
+def get_project_service(
+    db: DbSession, audit: AuditServiceDep, notifications: NotificationServiceDep
+) -> ProjectService:
+    return ProjectService(db, audit, notifications)
 
 
-def get_task_service(db: DbSession, audit: AuditServiceDep) -> TaskService:
-    return TaskService(db, audit)
+def get_task_service(
+    db: DbSession, audit: AuditServiceDep, notifications: NotificationServiceDep
+) -> TaskService:
+    return TaskService(db, audit, notifications)
 
 
 def get_task_dependency_service(db: DbSession, audit: AuditServiceDep) -> TaskDependencyService:
@@ -328,8 +338,10 @@ def get_dashboard_service(db: DbSession) -> DashboardService:
     return DashboardService(db)
 
 
-def get_comment_service(db: DbSession, audit: AuditServiceDep) -> CommentService:
-    return CommentService(db, audit)
+def get_comment_service(
+    db: DbSession, audit: AuditServiceDep, notifications: NotificationServiceDep
+) -> CommentService:
+    return CommentService(db, audit, notifications)
 
 
 def get_attachment_service(db: DbSession, audit: AuditServiceDep) -> AttachmentService:
